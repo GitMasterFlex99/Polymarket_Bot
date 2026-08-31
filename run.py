@@ -1,16 +1,21 @@
 """Interactive terminal entry point."""
 
-import sys
-
 from analyzer import analyze_market
 from news import format_sources, search_news
 from ollama_client import OllamaError, list_models
-from polymarket_api import PolymarketError, get_markets, market_summary, search_markets
+from polymarket_api import PolymarketError, get_markets, get_market_history, market_summary, search_markets
 
 
 def money(value) -> str:
     try:
         return f"${float(value):,.0f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def pct(value) -> str:
+    try:
+        return f"{float(value) * 100:+.2f} percentage points"
     except (TypeError, ValueError):
         return "N/A"
 
@@ -40,14 +45,38 @@ def choose_market(markets: list[dict]) -> dict | None:
         return None
 
 
+def show_movement(history: list[dict]) -> None:
+    print("HISTORICAL PRICE MOVEMENT")
+    print("-" * 62)
+    if not history:
+        print("No historical price data available.")
+        return
+    for item in history:
+        stats = item["stats"]
+        print(f"{item['outcome']}: ", end="")
+        if stats["change"] is None:
+            print("insufficient data")
+            continue
+        print(
+            f"{stats['start'] * 100:.2f}% -> {stats['end'] * 100:.2f}% "
+            f"({pct(stats['change'])}); range {stats['low'] * 100:.2f}%–{stats['high'] * 100:.2f}% "
+            f"over {stats['points']} observations"
+        )
+
+
 def analyze(raw: dict) -> None:
     market = market_summary(raw)
+    print("\nCollecting historical prices...\n")
+    history = get_market_history(raw, interval="1d", fidelity=60)
+    show_movement(history)
+
     print("\nCollecting independent sources...\n")
     sources = search_news(market["question"])
     print(format_sources(sources))
+
     print("\nRunning local Ollama analysis...\n")
     try:
-        print(analyze_market(market, sources))
+        print(analyze_market(market, sources, history))
     except OllamaError as exc:
         print(f"\nOllama error: {exc}")
         print("Install Ollama, start it, and pull a model such as llama3.2.")
@@ -56,7 +85,7 @@ def analyze(raw: dict) -> None:
 def main() -> None:
     print("=" * 62)
     print("POLYMARKET RESEARCH TERMINAL")
-    print("Local AI • Public Polymarket data • Concrete sources")
+    print("Local AI • Historical movement • Concrete sources")
     print("=" * 62)
 
     try:
